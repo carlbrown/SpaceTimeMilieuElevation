@@ -1,0 +1,13 @@
+diff --git a/Packages/HeliumLogger/Sources/HeliumLogger/HeliumLogger.swift b/Packages/HeliumLogger/Sources/HeliumLogger/HeliumLogger.swift
+index f080675..6e3a28a 100644
+--- a/Packages/HeliumLogger/Sources/HeliumLogger/HeliumLogger.swift
++++ b/Packages/HeliumLogger/Sources/HeliumLogger/HeliumLogger.swift
+@@ -113,7 +113,7 @@ public class HeliumLogger {
+     }
+ 
+     #if os(Linux)
+-    typealias RegularExpressionType = RegularExpression
++    typealias RegularExpressionType = NSRegularExpression
+     #else
+     typealias RegularExpressionType = NSRegularExpression
+     #endif
