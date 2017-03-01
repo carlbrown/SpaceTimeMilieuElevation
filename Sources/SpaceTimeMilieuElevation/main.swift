@@ -18,9 +18,9 @@ ourLogger.format = "(%type): (%date) - (%msg)"
 ourLogger.details = false
 Log.logger = ourLogger
 
-let myCertPath = "/Project/cert.pem"
-let myKeyPath = "/Project/key.pem"
-let myChainPath = "/Project/chain.pem"
+let myCertPath = "./cert.pem"
+let myKeyPath = "./key.pem"
+let myChainPath = "./chain.pem"
 
 //Enable Core Dumps on Linux
 #if os(Linux)

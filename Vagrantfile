@@ -33,7 +33,7 @@ Vagrant.configure(2) do |config|
 	sudo apt-get --assume-yes update
 # 1. Install compiler, autotools
     sudo apt-get --assume-yes install clang
-    sudo apt-get --assume-yes install autoconf libtool pkg-config
+    sudo apt-get --assume-yes install autoconf libtool pkg-config libpython2.7
 # 2. Install dtrace (to generate provider.h)
     sudo apt-get --assume-yes install systemtap-sdt-dev
 # 3. Install libdispatch pre-reqs
