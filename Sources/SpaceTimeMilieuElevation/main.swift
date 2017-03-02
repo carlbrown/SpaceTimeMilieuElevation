@@ -22,6 +22,10 @@ let myCertPath = "./cert.pem"
 let myKeyPath = "./key.pem"
 let myChainPath = "./chain.pem"
 
+guard let remoteURL = URL(string: "https://api.algorithmia.com/v1/algo/Gaploid/Elevation/0.3.6") else {
+    fatalError("Failed to create URL from hardcoded string")
+}
+
 //Enable Core Dumps on Linux
 #if os(Linux)
     
@@ -42,14 +46,25 @@ corelimit.deallocate(capacity: 1)
 
 let mySSLConfig =  SSLConfig(withCACertificateFilePath: myChainPath, usingCertificateFile: myCertPath, withKeyFile: myKeyPath, usingSelfSignedCerts: false)
 
-let router = Router()
-
 let APIKey: String
 let rawAPIKey = getenv("APIKEY")
 if let key = rawAPIKey, let keyString = String(utf8String: key) {
     APIKey = keyString
 } else {
     APIKey = Default_APIKey
+}
+
+let router = Router()
+
+//Log page responses
+router.all { (request, response, next) in
+    var previousOnEndInvoked: LifecycleHandler? = nil
+    let onEndInvoked: LifecycleHandler = { [weak response, weak request] in
+        Log.info("\(response?.statusCode.rawValue ?? 0) \(request?.originalURL ?? "unknown")")
+        previousOnEndInvoked?()
+    }
+    previousOnEndInvoked = response.setOnEndInvoked(onEndInvoked    )
+    next()
 }
 
 router.all(middleware: BodyParser())
@@ -59,30 +74,30 @@ router.post("/api") { request, response, next in
     guard let body = request.body  else {
         Log.error("Could not find request body! Giving up!")
         response.headers["Content-Type"] = "text/plain; charset=utf-8"
-        try response.status(.preconditionFailed).send("Could not find request body! Giving up!").end()
+        try? response.status(.preconditionFailed).send("Could not find request body! Giving up!").end()
         return
     }
     
     switch body {
         case .json(let jsonObj):
-            guard let url = URL(string: "https://api.algorithmia.com/v1/algo/Gaploid/Elevation/0.3.6") else {
-                fatalError("Failed to create URL from hardcoded string")
-            }
-            
             let model: Point
             do {
                 let bodyData = try jsonObj.rawData()
                 guard let bodyPoint = Point(fromJSON:bodyData) else {
-                    print("Could not get Point from Body JSON")
+                    Log.error("Could not get Point from Body JSON! Giving up!")
+                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                    try response.status(.preconditionFailed).send("Could not get Point from Body JSON! Giving up!").end()
                     return
                 }
                 model = bodyPoint
             } catch {
-                print(error)
+                Log.error("Could not get Point from Body JSON \(error)! Giving up!")
+                response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                try? response.status(.preconditionFailed).send("Could not get Point from Body JSON \(error)! Giving up!").end()
                 return
             }
             
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: remoteURL)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Simple \(APIKey)", forHTTPHeaderField: "Authorization")
@@ -90,7 +105,9 @@ router.post("/api") { request, response, next in
             do {
                 request.httpBody = try JSONSerialization.data(withJSONObject: ["lat":"\(model.latitudeDegrees)","lon":"\(model.longitudeDegrees)"])
             } catch {
-                print(error)
+                Log.error("Could not create remote JSON Payload \(error)! Giving up!")
+                response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                try? response.status(.preconditionFailed).send("Could not create remote JSON Payload \(error)! Giving up!").end()
                 return
             }
 
@@ -98,11 +115,15 @@ router.post("/api") { request, response, next in
             
             let task = session.dataTask(with: request){ fetchData,fetchResponse,fetchError in
                 guard fetchError == nil else {
-                    print(fetchError?.localizedDescription ?? "Error with no description")
+                    Log.error(fetchError?.localizedDescription ?? "Error with no description")
+                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                    try? response.status(.preconditionFailed).send(fetchError?.localizedDescription ?? "Error with no description").end()
                     return
                 }
                 guard let fetchData = fetchData else {
-                    print("Nil fetched data with no error")
+                    Log.error("Nil fetched data with no error")
+                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                    try? response.status(.preconditionFailed).send("Nil fetched data with no error").end()
                     return
                 }
                 
@@ -126,37 +147,30 @@ router.post("/api") { request, response, next in
                                 print("elevation: \(elevValue)")
                                 response.headers["Content-Type"] = "application/json; charset=utf-8"
                                 let resultToResend = try JSONSerialization.data(withJSONObject: resultValue)
-                                response.send(data:resultToResend)
+                                response.status(.OK).send(data:resultToResend)
                                 next()
                             }
                         }
                     } else {
-                        print("Could not parse JSON")
+                        Log.error("Could not parse JSON payload as Dictionary")
+                        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                        try response.status(.preconditionFailed).send("Could not parse JSON payload as Dictionary").end()
                         return
                     }
                 } catch {
-                    print(error)
+                    Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
+                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                    try? response.status(.preconditionFailed).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
                 }
             }
             task.resume()
     default:
         Log.error("Missing body")
-        try response.status(.preconditionFailed).send("Could not parse JSON request body! Giving up!").end()
+        try? response.status(.preconditionFailed).send("Could not parse JSON request body! Giving up!").end()
         return
 
     }
     
-}
-
-//Log page responses
-router.all { (request, response, next) in
-    var previousOnEndInvoked: LifecycleHandler? = nil
-    let onEndInvoked: LifecycleHandler = { [weak response, weak request] in
-        Log.info("\(response?.statusCode.rawValue ?? 0) \(request?.originalURL ?? "unknown")")
-        previousOnEndInvoked?()
-    }
-    previousOnEndInvoked = response.setOnEndInvoked(onEndInvoked    )
-    next()
 }
 
 // Handles any errors that get set
