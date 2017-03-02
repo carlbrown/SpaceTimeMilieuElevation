@@ -4,7 +4,6 @@ import Kitura
 import Dispatch
 import LoggerAPI
 import HeliumLogger
-import SwiftyJSON
 
 private let Default_APIKey="Get one from https://algorithmia.com"
 
@@ -67,109 +66,100 @@ router.all { (request, response, next) in
     next()
 }
 
-router.all(middleware: BodyParser())
-
 router.post("/api") { request, response, next in
     
-    guard let body = request.body  else {
-        Log.error("Could not find request body! Giving up!")
+    let bodyRaw: Data?
+    do {
+        bodyRaw = try BodyParser.readBodyData(with: request)
+    } catch {
+        Log.error("Could not read request body \(error)! Giving up!")
         response.headers["Content-Type"] = "text/plain; charset=utf-8"
-        try? response.status(.preconditionFailed).send("Could not find request body! Giving up!").end()
+        try? response.status(.preconditionFailed).send("Could not read request body \(error)! Giving up!").end()
         return
     }
     
-    switch body {
-        case .json(let jsonObj):
-            let model: Point
-            do {
-                let bodyData = try jsonObj.rawData()
-                guard let bodyPoint = Point(fromJSON:bodyData) else {
-                    Log.error("Could not get Point from Body JSON! Giving up!")
-                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                    try response.status(.preconditionFailed).send("Could not get Point from Body JSON! Giving up!").end()
-                    return
-                }
-                model = bodyPoint
-            } catch {
-                Log.error("Could not get Point from Body JSON \(error)! Giving up!")
-                response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                try? response.status(.preconditionFailed).send("Could not get Point from Body JSON \(error)! Giving up!").end()
-                return
-            }
-            
-            var request = URLRequest(url: remoteURL)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Simple \(APIKey)", forHTTPHeaderField: "Authorization")
-            
-            do {
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["lat":"\(model.latitudeDegrees)","lon":"\(model.longitudeDegrees)"])
-            } catch {
-                Log.error("Could not create remote JSON Payload \(error)! Giving up!")
-                response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                try? response.status(.preconditionFailed).send("Could not create remote JSON Payload \(error)! Giving up!").end()
-                return
-            }
-
-            let session = URLSession(configuration:URLSessionConfiguration.default)
-            
-            let task = session.dataTask(with: request){ fetchData,fetchResponse,fetchError in
-                guard fetchError == nil else {
-                    Log.error(fetchError?.localizedDescription ?? "Error with no description")
-                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                    try? response.status(.preconditionFailed).send(fetchError?.localizedDescription ?? "Error with no description").end()
-                    return
-                }
-                guard let fetchData = fetchData else {
-                    Log.error("Nil fetched data with no error")
-                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                    try? response.status(.preconditionFailed).send("Nil fetched data with no error").end()
-                    return
-                }
-                
-                do {
-                    let json = try JSONSerialization.jsonObject(with: fetchData, options: .mutableContainers)
-                    
-                    if let debug = getenv("DEBUG") { //debug
-                        //OK to crash if debugging turned on
-                        let jsonForPrinting = try! JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
-                        let jsonToPrint = String(data: jsonForPrinting, encoding: .utf8)
-                        print("result: \(jsonToPrint!)")
-                    }
-                    
-                    if let parseJSON = json as? [String: Any],
-                        let resultString:String = parseJSON["result"] as? String,
-                        let resultData = resultString.data(using: .utf8),
-                        let resultJSON = try? JSONSerialization.jsonObject(with:resultData) {
-                        
-                        if let resultValue:[String:String] = resultJSON as? [String:String] {
-                            if let elevValue:String = resultValue["elev"] {
-                                print("elevation: \(elevValue)")
-                                response.headers["Content-Type"] = "application/json; charset=utf-8"
-                                let resultToResend = try JSONSerialization.data(withJSONObject: resultValue)
-                                response.status(.OK).send(data:resultToResend)
-                                next()
-                            }
-                        }
-                    } else {
-                        Log.error("Could not parse JSON payload as Dictionary")
-                        response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                        try response.status(.preconditionFailed).send("Could not parse JSON payload as Dictionary").end()
-                        return
-                    }
-                } catch {
-                    Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
-                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                    try? response.status(.preconditionFailed).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
-                }
-            }
-            task.resume()
-    default:
-        Log.error("Missing body")
-        try? response.status(.preconditionFailed).send("Could not parse JSON request body! Giving up!").end()
+    let model: Point
+    guard let bodyData = bodyRaw else {
+        Log.error("Could not get bodyData from Raw Body! Giving up!")
+        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+        try? response.status(.preconditionFailed).send("Could not get bodyData from Raw Body! Giving up!").end()
         return
-
     }
+    guard let bodyPoint = Point(fromJSON:bodyData) else {
+        Log.error("Could not get Point from Body JSON! Giving up!")
+        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+        try response.status(.preconditionFailed).send("Could not get Point from Body JSON! Giving up!").end()
+        return
+    }
+    model = bodyPoint
+    
+    var request = URLRequest(url: remoteURL)
+    request.httpMethod = "POST"
+    request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.addValue("Simple \(APIKey)", forHTTPHeaderField: "Authorization")
+    
+    do {
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["lat":"\(model.latitudeDegrees)","lon":"\(model.longitudeDegrees)"])
+    } catch {
+        Log.error("Could not create remote JSON Payload \(error)! Giving up!")
+        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+        try? response.status(.preconditionFailed).send("Could not create remote JSON Payload \(error)! Giving up!").end()
+        return
+    }
+    
+    let session = URLSession(configuration:URLSessionConfiguration.default)
+    
+    let task = session.dataTask(with: request){ fetchData,fetchResponse,fetchError in
+        guard fetchError == nil else {
+            Log.error(fetchError?.localizedDescription ?? "Error with no description")
+            response.headers["Content-Type"] = "text/plain; charset=utf-8"
+            try? response.status(.preconditionFailed).send(fetchError?.localizedDescription ?? "Error with no description").end()
+            return
+        }
+        guard let fetchData = fetchData else {
+            Log.error("Nil fetched data with no error")
+            response.headers["Content-Type"] = "text/plain; charset=utf-8"
+            try? response.status(.preconditionFailed).send("Nil fetched data with no error").end()
+            return
+        }
+        
+        do {
+            let json = try JSONSerialization.jsonObject(with: fetchData, options: .mutableContainers)
+            
+            if let debug = getenv("DEBUG") { //debug
+                //OK to crash if debugging turned on
+                let jsonForPrinting = try! JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
+                let jsonToPrint = String(data: jsonForPrinting, encoding: .utf8)
+                print("result: \(jsonToPrint!)")
+            }
+            
+            if let parseJSON = json as? [String: Any],
+                let resultString:String = parseJSON["result"] as? String,
+                let resultData = resultString.data(using: .utf8),
+                let resultJSON = try? JSONSerialization.jsonObject(with:resultData) {
+                
+                if let resultValue:[String:String] = resultJSON as? [String:String] {
+                    if let elevValue:String = resultValue["elev"] {
+                        print("elevation: \(elevValue)")
+                        response.headers["Content-Type"] = "application/json; charset=utf-8"
+                        let resultToResend = try JSONSerialization.data(withJSONObject: resultValue)
+                        response.status(.OK).send(data:resultToResend)
+                        next()
+                    }
+                }
+            } else {
+                Log.error("Could not parse JSON payload as Dictionary")
+                response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                try response.status(.preconditionFailed).send("Could not parse JSON payload as Dictionary").end()
+                return
+            }
+        } catch {
+            Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
+            response.headers["Content-Type"] = "text/plain; charset=utf-8"
+            try? response.status(.preconditionFailed).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
+        }
+    }
+    task.resume()
     
 }
 
