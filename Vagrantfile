@@ -3,16 +3,14 @@
 
 BOX_BASE =  'ubuntu/yakkety64'.freeze
 
-SWIFT_PATH = 'https://swift.org/builds/swift-3.1-branch/ubuntu1610/swift-3.1-DEVELOPMENT-SNAPSHOT-2017-02-28-a'.freeze
-SWIFT_DIRECTORY = 'swift-3.1-DEVELOPMENT-SNAPSHOT-2017-02-28-a-ubuntu16.10'.freeze
+SWIFT_PATH = 'https://swift.org/builds/swift-3.1-branch/ubuntu1610/swift-3.1-DEVELOPMENT-SNAPSHOT-2017-03-02-a'.freeze
+SWIFT_DIRECTORY = 'swift-3.1-DEVELOPMENT-SNAPSHOT-2017-03-02-a-ubuntu16.10'.freeze
 SWIFT_FILE = "#{SWIFT_DIRECTORY}.tar.gz".freeze
 SWIFT_HOME = "/home/vagrant/#{SWIFT_DIRECTORY}".freeze
 
 Vagrant.configure(2) do |config|
   config.vm.box = BOX_BASE
-  config.vm.network 'forwarded_port', guest: 8090, host: 8090
-  config.vm.network 'forwarded_port', guest: 8080, host: 8080
-  config.vm.network 'forwarded_port', guest: 8181, host: 8181
+  config.vm.network 'forwarded_port', guest: 8091, host: 8091
   config.vm.synced_folder ".", "/Project"
 
 	config.vm.provider "virtualbox" do |v|

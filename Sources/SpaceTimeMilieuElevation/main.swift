@@ -103,7 +103,7 @@ router.post("/api") { request, response, next in
     } catch {
         Log.error("Could not create remote JSON Payload \(error)! Giving up!")
         response.headers["Content-Type"] = "text/plain; charset=utf-8"
-        try? response.status(.preconditionFailed).send("Could not create remote JSON Payload \(error)! Giving up!").end()
+        try? response.status(.internalServerError).send("Could not create remote JSON Payload \(error)! Giving up!").end()
         return
     }
     
@@ -113,13 +113,13 @@ router.post("/api") { request, response, next in
         guard fetchError == nil else {
             Log.error(fetchError?.localizedDescription ?? "Error with no description")
             response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.preconditionFailed).send(fetchError?.localizedDescription ?? "Error with no description").end()
+            try? response.status(.internalServerError).send(fetchError?.localizedDescription ?? "Error with no description").end()
             return
         }
         guard let fetchData = fetchData else {
             Log.error("Nil fetched data with no error")
             response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.preconditionFailed).send("Nil fetched data with no error").end()
+            try? response.status(.internalServerError).send("Nil fetched data with no error").end()
             return
         }
         
@@ -141,22 +141,32 @@ router.post("/api") { request, response, next in
                 if let resultValue:[String:String] = resultJSON as? [String:String] {
                     if let elevValue:String = resultValue["elev"] {
                         print("elevation: \(elevValue)")
-                        response.headers["Content-Type"] = "application/json; charset=utf-8"
-                        let resultToResend = try JSONSerialization.data(withJSONObject: resultValue)
-                        response.status(.OK).send(data:resultToResend)
-                        next()
+                        do {
+                            let decoration = Decoration(title: "elevation: \(elevValue)")
+                            let retVal = [ Point.pointKey: model.toDictionary(),
+                                           Decoration.decorationKey: decoration.toDictionary()]
+                            response.headers["Content-Type"] = "application/json; charset=utf-8"
+                            let resultToResend = try JSONSerialization.data(withJSONObject: retVal)
+                            response.status(.OK).send(data:resultToResend)
+                            next()
+                        } catch {
+                            Log.error("Could not create return JSON Payload \(error)! Giving up!")
+                            response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                            try? response.status(.internalServerError).send("Could not create return JSON Payload \(error)! Giving up!").end()
+                            return
+                        }
                     }
                 }
             } else {
                 Log.error("Could not parse JSON payload as Dictionary")
                 response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                try response.status(.preconditionFailed).send("Could not parse JSON payload as Dictionary").end()
+                try response.status(.internalServerError).send("Could not parse JSON payload as Dictionary").end()
                 return
             }
         } catch {
             Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
             response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.preconditionFailed).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
+            try? response.status(.internalServerError).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
         }
     }
     task.resume()
@@ -183,5 +193,5 @@ router.get("/ping") { request, response, next in
     try response.send("OK").end()
 }
 
-Kitura.addHTTPServer(onPort: 8090, with: router, withSSL: mySSLConfig)
+Kitura.addHTTPServer(onPort: 8091, with: router, withSSL: mySSLConfig)
 Kitura.run()
