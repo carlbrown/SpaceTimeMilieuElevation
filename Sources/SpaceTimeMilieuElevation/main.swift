@@ -43,7 +43,10 @@ if (status != 0) {
 corelimit.deallocate(capacity: 1)
 #endif
 
+//Don't do SSL on macOS
+#if os(Linux)
 let mySSLConfig =  SSLConfig(withCACertificateFilePath: myChainPath, usingCertificateFile: myCertPath, withKeyFile: myKeyPath, usingSelfSignedCerts: false)
+#endif
 
 let APIKey: String
 let rawAPIKey = getenv("APIKEY")
@@ -78,99 +81,125 @@ router.post("/api") { request, response, next in
         return
     }
     
-    let model: Point
     guard let bodyData = bodyRaw else {
         Log.error("Could not get bodyData from Raw Body! Giving up!")
         response.headers["Content-Type"] = "text/plain; charset=utf-8"
         try? response.status(.preconditionFailed).send("Could not get bodyData from Raw Body! Giving up!").end()
         return
     }
-    guard let bodyPoint = Point(fromJSON:bodyData) else {
-        Log.error("Could not get Point from Body JSON! Giving up!")
-        response.headers["Content-Type"] = "text/plain; charset=utf-8"
-        try response.status(.preconditionFailed).send("Could not get Point from Body JSON! Giving up!").end()
-        return
-    }
-    model = bodyPoint
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = Point.iso8601Format
     
-    var request = URLRequest(url: remoteURL)
-    request.httpMethod = "POST"
-    request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.addValue("Simple \(APIKey)", forHTTPHeaderField: "Authorization")
-    
+    let bodyPointArray: [Point]
     do {
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["lat":"\(model.latitudeDegrees)","lon":"\(model.longitudeDegrees)"])
+        bodyPointArray = try Point.decodeJSON(data: bodyData)
     } catch {
-        Log.error("Could not create remote JSON Payload \(error)! Giving up!")
+        Log.error("Could not get Points from Body JSON! Giving up!")
         response.headers["Content-Type"] = "text/plain; charset=utf-8"
-        try? response.status(.internalServerError).send("Could not create remote JSON Payload \(error)! Giving up!").end()
+        try response.status(.preconditionFailed).send("Could not get Point from Body JSON \(error)! Giving up!").end()
         return
     }
+
+    let fetchGroup = DispatchGroup()
     
-    let session = URLSession(configuration:URLSessionConfiguration.default)
+    let dictUpdateQueue =
+        DispatchQueue(
+            label: "com.ibm.swift.dictUpdateQueue",
+            attributes: .concurrent)
     
-    let task = session.dataTask(with: request){ fetchData,fetchResponse,fetchError in
-        guard fetchError == nil else {
-            Log.error(fetchError?.localizedDescription ?? "Error with no description")
+    var decorationsToReturn = [Decoration]()
+    
+    for model in bodyPointArray {
+        
+        fetchGroup.enter()
+
+        var request = URLRequest(url: remoteURL)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Simple \(APIKey)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["lat":"\(model.latitudeDegrees)","lon":"\(model.longitudeDegrees)"])
+        } catch {
+            Log.error("Could not create remote JSON Payload \(error)! Giving up!")
             response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.internalServerError).send(fetchError?.localizedDescription ?? "Error with no description").end()
-            return
-        }
-        guard let fetchData = fetchData else {
-            Log.error("Nil fetched data with no error")
-            response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.internalServerError).send("Nil fetched data with no error").end()
+            try? response.status(.internalServerError).send("Could not create remote JSON Payload \(error)! Giving up!").end()
+            fetchGroup.leave()
             return
         }
         
-        do {
-            let json = try JSONSerialization.jsonObject(with: fetchData, options: .mutableContainers)
-            
-            if let debug = getenv("DEBUG") { //debug
-                //OK to crash if debugging turned on
-                let jsonForPrinting = try! JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
-                let jsonToPrint = String(data: jsonForPrinting, encoding: .utf8)
-                print("result: \(jsonToPrint!)")
+        let session = URLSession(configuration:URLSessionConfiguration.default)
+        
+        let task = session.dataTask(with: request){ fetchData,fetchResponse,fetchError in
+            guard fetchError == nil else {
+                Log.error(fetchError?.localizedDescription ?? "Error with no description")
+                response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                try? response.status(.internalServerError).send(fetchError?.localizedDescription ?? "Error with no description").end()
+                fetchGroup.leave()
+                return
+            }
+            guard let fetchData = fetchData else {
+                Log.error("Nil fetched data with no error")
+                response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                try? response.status(.internalServerError).send("Nil fetched data with no error").end()
+                fetchGroup.leave()
+                return
             }
             
-            if let parseJSON = json as? [String: Any],
-                let resultString:String = parseJSON["result"] as? String,
-                let resultData = resultString.data(using: .utf8),
-                let resultJSON = try? JSONSerialization.jsonObject(with:resultData) {
+            do {
+                let json = try JSONSerialization.jsonObject(with: fetchData, options: .mutableContainers)
                 
-                if let resultValue:[String:String] = resultJSON as? [String:String] {
-                    if let elevValue:String = resultValue["elev"] {
-                        print("elevation: \(elevValue)")
-                        do {
-                            let decoration = Decoration(title: "elevation: \(elevValue)")
-                            let retVal = [ Point.pointKey: model.toDictionary(),
-                                           Decoration.decorationKey: decoration.toDictionary()]
-                            response.headers["Content-Type"] = "application/json; charset=utf-8"
-                            let resultToResend = try JSONSerialization.data(withJSONObject: retVal)
-                            response.status(.OK).send(data:resultToResend)
-                            next()
-                        } catch {
-                            Log.error("Could not create return JSON Payload \(error)! Giving up!")
-                            response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                            try? response.status(.internalServerError).send("Could not create return JSON Payload \(error)! Giving up!").end()
+                if let debug = getenv("DEBUG") { //debug
+                    //OK to crash if debugging turned on
+                    let jsonForPrinting = try! JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
+                    let jsonToPrint = String(data: jsonForPrinting, encoding: .utf8)
+                    print("result: \(jsonToPrint!)")
+                }
+                
+                if let parseJSON = json as? [String: Any],
+                    let resultString:String = parseJSON["result"] as? String,
+                    let resultData = resultString.data(using: .utf8),
+                    let resultJSON = try? JSONSerialization.jsonObject(with:resultData) {
+                    
+                    if let resultValue:[String:String] = resultJSON as? [String:String] {
+                        if let elevValue:String = resultValue["elev"] {
+                            print("elevation: \(elevValue)")
+                            let decoration = Decoration(title: "elevation: \(elevValue)", point: model)
+                            dictUpdateQueue.async(flags: .barrier) {
+                                decorationsToReturn.append(decoration)
+                                fetchGroup.leave()
+                            }
                             return
                         }
                     }
+                } else {
+                    Log.error("Could not parse JSON payload as Dictionary")
+                    response.headers["Content-Type"] = "text/plain; charset=utf-8"
+                    try response.status(.internalServerError).send("Could not parse JSON payload as Dictionary").end()
+                    fetchGroup.leave()
+                    return
                 }
-            } else {
-                Log.error("Could not parse JSON payload as Dictionary")
+            } catch {
+                Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
                 response.headers["Content-Type"] = "text/plain; charset=utf-8"
-                try response.status(.internalServerError).send("Could not parse JSON payload as Dictionary").end()
+                try? response.status(.internalServerError).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
+                fetchGroup.leave()
                 return
             }
-        } catch {
-            Log.error("Could not parse remote JSON Payload \(error)! Giving up!")
-            response.headers["Content-Type"] = "text/plain; charset=utf-8"
-            try? response.status(.internalServerError).send("Could not parse remote JSON Payload \(error)! Giving up!").end()
         }
+        task.resume()
     }
-    task.resume()
-    
+    let timedout = fetchGroup.wait(timeout: DispatchTime.now() + 60)
+    do {
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+        response.status(.OK).send(data:try Decoration.encodeJSON(decorations: decorationsToReturn, dateFormatter: dateFormatter))
+        next()
+    } catch {
+        Log.error("Could not create JSON Payload to return \(error)! Giving up!")
+        response.headers["Content-Type"] = "text/plain; charset=utf-8"
+        try? response.status(.internalServerError).send("Could not create JSON Payload to return \(error)! Giving up!").end()
+    }
+
 }
 
 // Handles any errors that get set
@@ -193,5 +222,10 @@ router.get("/ping") { request, response, next in
     try response.send("OK").end()
 }
 
+//Don't do SSL on macOS
+#if os(Linux)
 Kitura.addHTTPServer(onPort: 8091, with: router, withSSL: mySSLConfig)
+#else
+Kitura.addHTTPServer(onPort: 8091, with: router)
+#endif
 Kitura.run()
