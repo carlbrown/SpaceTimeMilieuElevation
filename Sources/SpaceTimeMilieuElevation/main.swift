@@ -164,7 +164,7 @@ router.post("/api") { request, response, next in
                     if let resultValue:[String:String] = resultJSON as? [String:String] {
                         if let elevValue:String = resultValue["elev"] {
                             print("elevation: \(elevValue)")
-                            let decoration = Decoration(title: "elevation: \(elevValue)", point: model)
+                            let decoration = Decoration(title: "elevation: \(elevValue)", source: "Elevation", point: model)
                             dictUpdateQueue.async(flags: .barrier) {
                                 decorationsToReturn.append(decoration)
                                 fetchGroup.leave()
